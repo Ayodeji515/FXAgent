@@ -100,6 +100,17 @@ def compute_metrics(trades, equity0=10000.0):
     }
 
 
+def load_mt5_status():
+    status_path = os.path.join(OUT_DIR, "mt5_status.json")
+    if os.path.exists(status_path):
+        try:
+            with open(status_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+
 def get_dashboard_data():
     trades = load_trades()
     xau_trades = [t for t in trades if t.get("symbol") == "XAUUSD"]
@@ -113,6 +124,7 @@ def get_dashboard_data():
         "total_trades_count": len(trades),
         "decisions_xau": load_decisions("XAUUSD"),
         "decisions_gbp": load_decisions("GBPUSD"),
+        "mt5_status": load_mt5_status(),
     }
 
 
@@ -598,6 +610,25 @@ HTML_CONTENT = """<!DOCTYPE html>
 
     <!-- TAB 1: DASHBOARD -->
     <div id="tab-dashboard" class="tab-content active">
+      <!-- MT5 Live Scalper Monitor Banner -->
+      <div id="mt5-banner" style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(6, 182, 212, 0.15)); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+        <div style="display: flex; align-items: center; gap: 0.85rem;">
+          <div id="mt5-pulse" class="pulse-dot" style="background: var(--accent-emerald); box-shadow: 0 0 10px var(--accent-emerald);"></div>
+          <div>
+            <div style="font-weight: 700; font-size: 0.95rem; display: flex; align-items: center; gap: 0.5rem;">
+              <span>MetaTrader 5 Auto-Scalper Bridge</span>
+              <span id="mt5-mode-tag" class="badge badge-long">STANDBY</span>
+            </div>
+            <div id="mt5-subtext" style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.2rem;">
+              Run <code>python mt5_trader.py --symbol XAUUSD --timeframe M5 --mode paper</code> to start auto-trading
+            </div>
+          </div>
+        </div>
+        <div id="mt5-tickers" style="display: flex; gap: 1rem; font-family: 'JetBrains Mono', monospace; font-size: 0.82rem;">
+          <!-- Live Symbol Ticker -->
+        </div>
+      </div>
+
       <!-- KPIs -->
       <div class="kpi-grid">
         <div class="kpi-card">
@@ -854,6 +885,33 @@ def sync_and_trade():
       const xau = appData.xau;
       const gbp = appData.gbp;
 
+      // MT5 Live Status
+      const mt5 = appData.mt5_status;
+      const tag = document.getElementById('mt5-mode-tag');
+      const sub = document.getElementById('mt5-subtext');
+      const tickers = document.getElementById('mt5-tickers');
+      if (mt5 && (Date.now() / 1000 - mt5.timestamp < 30)) {
+        tag.textContent = (mt5.mode || 'LIVE').toUpperCase() + ' ' + (mt5.timeframe || 'M5') + (mt5.mock ? ' [SIMULATED]' : ' [MT5 LIVE]');
+        tag.className = 'badge ' + (mt5.mode === 'live' ? 'badge-short' : 'badge-long');
+        sub.innerHTML = `Account Equity: <strong>$${mt5.account.equity.toFixed(2)}</strong> | Peak: <strong>$${mt5.account.peak_equity.toFixed(2)}</strong> | Scalping Timeframe: <strong>${mt5.timeframe}</strong>`;
+        tickers.innerHTML = '';
+        for (const [sym, info] of Object.entries(mt5.symbols)) {
+          const div = document.createElement('div');
+          div.style.background = 'rgba(0,0,0,0.3)';
+          div.style.padding = '0.35rem 0.75rem';
+          div.style.borderRadius = '6px';
+          div.style.border = '1px solid var(--border)';
+          const dirColor = info.position_dir === 'LONG' ? 'var(--accent-emerald)' : (info.position_dir === 'SHORT' ? 'var(--accent-rose)' : 'var(--text-muted)');
+          div.innerHTML = `<span style="color:#fbbf24; font-weight:700;">${sym}:</span> ${info.bid.toFixed(sym === 'XAUUSD'?2:5)} | <span style="color:${dirColor}; font-weight:600;">${info.position_dir}</span> ${info.position_lots ? '(' + info.position_lots + 'L)' : ''}`;
+          tickers.appendChild(div);
+        }
+      } else {
+        tag.textContent = 'STANDBY';
+        tag.className = 'badge';
+        sub.innerHTML = 'Run <code>python mt5_trader.py --symbol XAUUSD --timeframe M5 --mode paper</code> in PowerShell to activate';
+        tickers.innerHTML = '';
+      }
+
       // KPIs
       const pnlEl = document.getElementById('kpi-net-pnl');
       pnlEl.textContent = (o.net_pnl >= 0 ? '+$' : '-$') + Math.abs(o.net_pnl).toFixed(2);
@@ -1003,7 +1061,10 @@ def sync_and_trade():
       }
     }
 
-    window.addEventListener('load', loadData);
+    window.addEventListener('load', () => {
+      loadData();
+      setInterval(loadData, 2500);
+    });
     window.addEventListener('resize', () => { if (appData) drawEquityChart(appData.overall.curve); });
   </script>
 </body>
